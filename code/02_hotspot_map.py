@@ -4,7 +4,11 @@ Biodiversity Project — Step 2: Visualize Biodiversity Hotspots
 Loads species occurrence data and creates a heatmap of biodiversity
 hotspots across MD, VA, and PA.
 
+Also exposes plot_priority_choropleth() which overlays the composite
+conservation priority scores from 05_priority_score.py onto a static map.
+
 Run 01_fetch_species_data.py first to generate the CSV files.
+Run 05_priority_score.py to generate maryland_priority_grid.csv.
 
 Dependencies: pip install pandas geopandas matplotlib folium seaborn
 """
@@ -12,6 +16,7 @@ Dependencies: pip install pandas geopandas matplotlib folium seaborn
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.cm as cm
 import numpy as np
 from pathlib import Path
 
@@ -161,6 +166,101 @@ def create_interactive_map(df):
     print("  Open biodiversity_interactive_map.html in your browser!")
 
 
+def plot_priority_choropleth(grid_csv=None, top_n=10):
+    """
+    Create a static choropleth map of Maryland conservation priority scores.
+
+    Reads maryland_priority_grid.csv (produced by 05_priority_score.py) and
+    renders each grid cell as a colored rectangle, shaded by priority score.
+    Top top_n cells are annotated with rank labels.
+
+    Args:
+        grid_csv: Path to the priority grid CSV. Defaults to
+                  data/maryland_priority_grid.csv.
+        top_n:    Number of top-ranked cells to annotate.
+    """
+    if grid_csv is None:
+        grid_csv = DATA_DIR / "maryland_priority_grid.csv"
+
+    if not Path(grid_csv).exists():
+        print(f"  Priority grid not found at {grid_csv}")
+        print("  Run 05_priority_score.py first to generate it.")
+        return None
+
+    grid = pd.read_csv(grid_csv)
+    grid = grid[grid["priority_score"] > 0]
+
+    if grid.empty:
+        print("  No scored cells found in priority grid.")
+        return None
+
+    cell_size = 0.05
+    score_min = grid["priority_score"].min()
+    score_max = grid["priority_score"].max()
+
+    fig, ax = plt.subplots(figsize=(14, 10))
+
+    cmap = cm.get_cmap("YlOrRd")
+    norm = mcolors.Normalize(vmin=score_min, vmax=score_max)
+
+    for _, row in grid.iterrows():
+        color = cmap(norm(row["priority_score"]))
+        rect = plt.Rectangle(
+            (row["lon_cell"], row["lat_cell"]),
+            cell_size, cell_size,
+            linewidth=0, facecolor=color, alpha=0.75
+        )
+        ax.add_patch(rect)
+
+    # Annotate top N cells
+    top_cells = grid.nlargest(top_n, "priority_score")
+    for rank, (_, row) in enumerate(top_cells.iterrows(), start=1):
+        ax.annotate(
+            f"#{rank}",
+            (row["lon_center"], row["lat_center"]),
+            fontsize=7, fontweight="bold", color="white",
+            ha="center", va="center",
+            bbox=dict(boxstyle="round,pad=0.2", fc="black", alpha=0.6)
+        )
+
+    # Known reference sites
+    sites = {
+        "Blackwater NWR":   (-76.07, 38.45),
+        "Catoctin Mtn":     (-77.46, 39.62),
+        "C&O Canal":        (-77.55, 39.10),
+        "Patuxent Refuge":  (-76.80, 39.07),
+        "Annapolis":        (-76.49, 38.97),
+    }
+    for name, (lon, lat) in sites.items():
+        ax.plot(lon, lat, "b^", markersize=7, zorder=5)
+        ax.annotate(name, (lon, lat), textcoords="offset points",
+                    xytext=(5, 4), fontsize=7, color="navy")
+
+    # Colorbar
+    sm = cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("Conservation Priority Score (0–100)", fontsize=10)
+
+    ax.set_xlim(-79.6, -74.9)
+    ax.set_ylim(37.8, 39.8)
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(
+        "Maryland Conservation Priority Map\n"
+        "(Species Richness + Rare Species + Cross-State Connectivity)",
+        fontsize=13, fontweight="bold"
+    )
+    ax.set_facecolor("#d0e8f5")  # light blue = water/background
+
+    plt.tight_layout()
+    output_path = OUTPUT_DIR / "maryland_priority_choropleth.png"
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    print(f"  Saved priority choropleth → {output_path}")
+    plt.show()
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -184,4 +284,12 @@ if __name__ == "__main__":
         print("\n=== Generating Interactive Map ===")
         create_interactive_map(df)
 
-        print("\n✅ Visualization complete! Check the /data folder.")
+    # Priority choropleth is generated separately (requires 05_priority_score.py output)
+    priority_grid = DATA_DIR / "maryland_priority_grid.csv"
+    if priority_grid.exists():
+        print("\n=== Generating Priority Choropleth ===")
+        plot_priority_choropleth()
+    else:
+        print("\n(Skipping priority choropleth — run 05_priority_score.py first)")
+
+    print("\n✅ Visualization complete! Check the /data folder.")
